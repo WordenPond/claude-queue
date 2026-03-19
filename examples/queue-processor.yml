@@ -1,0 +1,21 @@
+name: Queue Runner
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "QUEUE.md"
+
+jobs:
+  run-queue:
+    uses: WordenPond/claude-queue/.github/workflows/queue-processor.yml@main
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      GH_PAT: ${{ secrets.GH_PAT }}
+    # Optional: use a custom prompt file (default: .github/prompts/implement.txt)
+    # with:
+    #   prompt_path: .github/prompts/implement.txt

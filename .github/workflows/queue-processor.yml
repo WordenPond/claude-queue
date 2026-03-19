@@ -167,6 +167,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           ISSUE="${{ steps.next_issue.outputs.issue }}"
+          git stash --include-untracked || true
           git checkout main
           git pull --rebase origin main
           sed -i "s/^- \[ \] #${ISSUE}$/- [x] #${ISSUE}/" QUEUE.md

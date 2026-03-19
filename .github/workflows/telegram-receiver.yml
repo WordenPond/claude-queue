@@ -130,13 +130,13 @@ jobs:
               ADDED=""
               for NUM in $ISSUES; do
                 if ! grep -qE "^\- \[.\] #${NUM}$" QUEUE.md; then
-                  sed -i "/^## Queue/a - [ ] #${NUM}" QUEUE.md
+                  sed -i "/^<!-- Add issues/i - [ ] #${NUM}" QUEUE.md
                   ADDED="$ADDED #$NUM"
                 fi
               done
               if [[ -n "$ADDED" ]]; then
                 git add QUEUE.md
-                git commit -m "chore: add${ADDED} to queue via Telegram [skip ci]"
+                git commit -m "chore: add${ADDED} to queue via Telegram"
                 git push origin main --quiet || true
                 send_reply "Added to queue:${ADDED}"
               else
@@ -230,7 +230,7 @@ jobs:
           }
 
           DEADLINE=$(( $(date +%s) + 50 ))
-          git pull --rebase origin main --quiet || true
+          git pull --rebase origin main --quiet || { git rebase --abort 2>/dev/null || true; }
           LAST_ID=$(cat .telegram-last-id 2>/dev/null | grep -E '^[0-9]+$' || echo "0")
 
           while [[ $(date +%s) -lt $DEADLINE ]]; do

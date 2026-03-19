@@ -1,0 +1,19 @@
+name: Implement Issue
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'GitHub issue number to implement'
+        required: true
+
+jobs:
+  implement:
+    uses: WordenPond/claude-queue/.github/workflows/implement-issue.yml@main
+    with:
+      issue_number: ${{ github.event.inputs.issue_number }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      GH_PAT: ${{ secrets.GH_PAT }}

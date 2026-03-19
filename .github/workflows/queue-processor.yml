@@ -1,0 +1,182 @@
+name: Queue Processor (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      prompt_path:
+        description: 'Path to implement prompt in caller repo (default: .github/prompts/implement.txt)'
+        type: string
+        default: '.github/prompts/implement.txt'
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+      TELEGRAM_BOT_TOKEN:
+        required: true
+      TELEGRAM_CHAT_ID:
+        required: true
+      GH_PAT:
+        required: true
+
+jobs:
+  run-queue:
+    name: Process next issue in queue
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+          fetch-depth: 0
+
+      - name: Checkout telegram-code-bot (scripts)
+        uses: actions/checkout@v4
+        with:
+          repository: WordenPond/claude-queue
+          path: .telegram-code-bot
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config core.hooksPath .githooks || true
+
+      - name: Check for pause flag
+        id: pause_check
+        run: |
+          if [ -f ".queue-paused" ]; then
+            echo "paused=true" >> $GITHUB_OUTPUT
+            echo "Queue is paused. Halting."
+          else
+            echo "paused=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Find next issue
+        if: steps.pause_check.outputs.paused == 'false'
+        id: next_issue
+        run: |
+          ISSUE=$(awk '/^## Queue/{found=1} found && /^\- \[ \] #[0-9]/{print; exit}' QUEUE.md | grep -oP '#\K[0-9]+' || true)
+          if [ -z "$ISSUE" ]; then
+            echo "empty=true" >> $GITHUB_OUTPUT
+            echo "issue=" >> $GITHUB_OUTPUT
+            echo "Queue is empty."
+          else
+            echo "empty=false" >> $GITHUB_OUTPUT
+            echo "issue=$ISSUE" >> $GITHUB_OUTPUT
+            echo "Next issue: #$ISSUE"
+          fi
+
+      - name: Notify PO — queue empty
+        if: steps.pause_check.outputs.paused == 'false' && steps.next_issue.outputs.empty == 'true'
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: bash .telegram-code-bot/scripts/notify-telegram.sh "Queue empty — send me more issue numbers to continue."
+
+      - name: Set up Node.js
+        if: steps.pause_check.outputs.paused == 'false' && steps.next_issue.outputs.empty == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code CLI
+        if: steps.pause_check.outputs.paused == 'false' && steps.next_issue.outputs.empty == 'false'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Configure Claude permissions
+        if: steps.pause_check.outputs.paused == 'false' && steps.next_issue.outputs.empty == 'false'
+        run: |
+          mkdir -p .claude
+          cat > .claude/settings.json << 'EOF'
+          {
+            "permissions": {
+              "allow": ["Bash(*)", "Read(*)", "Write(*)", "Edit(*)", "Glob(*)", "Grep(*)"],
+              "deny": []
+            }
+          }
+          EOF
+
+      - name: Resolve prompt file
+        if: steps.pause_check.outputs.paused == 'false' && steps.next_issue.outputs.empty == 'false'
+        id: prompt
+        run: |
+          CUSTOM="${{ inputs.prompt_path }}"
+          DEFAULT=".telegram-code-bot/prompts/implement-default.txt"
+          if [ -f "$CUSTOM" ]; then
+            echo "path=$CUSTOM" >> $GITHUB_OUTPUT
+          else
+            echo "path=$DEFAULT" >> $GITHUB_OUTPUT
+            echo "No prompt at $CUSTOM — using default."
+          fi
+
+      - name: Implement issue #${{ steps.next_issue.outputs.issue }}
+        if: steps.pause_check.outputs.paused == 'false' && steps.next_issue.outputs.empty == 'false'
+        id: implement
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          ISSUE="${{ steps.next_issue.outputs.issue }}"
+          PROMPT_FILE="${{ steps.prompt.outputs.path }}"
+          echo "Implementing issue #$ISSUE using prompt: $PROMPT_FILE"
+          PROMPT=$(sed "s/ISSUE_NUMBER/${ISSUE}/g" "$PROMPT_FILE")
+          PROMPT=$(printf '%s\n\n IMPORTANT: Do NOT merge the PR. Stop after creating the PR and pushing the branch. The Product Owner will review and approve the merge separately.' "$PROMPT")
+          claude --print "$PROMPT" | tee /tmp/claude-implement-output.txt
+          PR=$(grep -oP '(?<=PR: )[0-9]+' /tmp/claude-implement-output.txt | head -1 || true)
+          if [ -z "$PR" ]; then
+            PR=$(gh pr list --state open --limit 1 --json number --jq '.[0].number' 2>/dev/null || true)
+          fi
+          echo "pr_number=$PR" >> $GITHUB_OUTPUT
+
+      - name: Review and resolve PR
+        if: steps.pause_check.outputs.paused == 'false' && steps.next_issue.outputs.empty == 'false' && steps.implement.outputs.pr_number != ''
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          PR="${{ steps.implement.outputs.pr_number }}"
+          gh pr checkout "$PR"
+          claude --print "Review PR #${PR} and resolve ALL issues or recommendations found in the diff and any automated checks. For each problem found: fix it in the code, commit the fix to the PR branch, and push. Do not create new GitHub issues for suggestions -- fix them directly in this PR. When all issues are resolved, output: REVIEW_COMPLETE"
+
+      - name: Notify PO — PR ready
+        if: steps.pause_check.outputs.paused == 'false' && steps.next_issue.outputs.empty == 'false' && steps.implement.outputs.pr_number != ''
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          PR="${{ steps.implement.outputs.pr_number }}"
+          ISSUE="${{ steps.next_issue.outputs.issue }}"
+          REPO="${{ github.repository }}"
+          MSG=$(printf "PR #%s ready for issue #%s.\n\nReply with:\n  rev %s   -- Claude re-reviews and fixes\n  merge %s -- merge and continue queue\n\nhttps://github.com/%s/pull/%s" "$PR" "$ISSUE" "$PR" "$PR" "$REPO" "$PR")
+          bash .telegram-code-bot/scripts/notify-telegram.sh "$MSG"
+
+      - name: Mark issue complete in queue
+        if: steps.pause_check.outputs.paused == 'false' && steps.next_issue.outputs.empty == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          ISSUE="${{ steps.next_issue.outputs.issue }}"
+          git checkout main
+          git pull --rebase origin main
+          sed -i "s/^- \[ \] #${ISSUE}$/- [x] #${ISSUE}/" QUEUE.md
+          git add QUEUE.md
+          git commit -m "chore: mark #${ISSUE} complete in queue [skip ci]" || echo "Nothing to commit"
+          git push origin main
+
+      - name: Trigger next queue item
+        if: steps.pause_check.outputs.paused == 'false' && steps.next_issue.outputs.empty == 'false'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: gh workflow run queue-processor.yml --repo ${{ github.repository }}

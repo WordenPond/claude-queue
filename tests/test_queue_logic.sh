@@ -20,7 +20,8 @@ assert_equals() {
 
 assert_contains() {
   local desc="$1" needle="$2" haystack="$3"
-  if echo "$haystack" | grep -qF "$needle"; then
+  # Use -- to avoid needle being parsed as grep flag (e.g. "- [x]" starts with -)
+  if echo "$haystack" | grep -qF -- "$needle"; then
     echo "  PASS: $desc"
     PASS=$((PASS + 1))
   else
@@ -31,7 +32,7 @@ assert_contains() {
 
 assert_not_contains() {
   local desc="$1" needle="$2" haystack="$3"
-  if ! echo "$haystack" | grep -qF "$needle"; then
+  if ! echo "$haystack" | grep -qF -- "$needle"; then
     echo "  PASS: $desc"
     PASS=$((PASS + 1))
   else
@@ -128,7 +129,6 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-# Duplicate not added twice
 add_to_queue "$TMP/QUEUE.md" 20
 COUNT=$(grep -c "^\- \[ \] #20$" "$TMP/QUEUE.md" || true)
 assert_equals "duplicate not added twice" "1" "$COUNT"
@@ -147,9 +147,9 @@ cat > "$TMP/QUEUE.md" << 'EOF'
 EOF
 sed -i "s/^- \[ \] #15$/- [x] #15/" "$TMP/QUEUE.md"
 CONTENT=$(cat "$TMP/QUEUE.md")
-assert_contains     "issue 15 marked complete"    "- [x] #15" "$CONTENT"
-assert_contains     "issue 16 still pending"      "- [ ] #16" "$CONTENT"
-assert_not_contains "issue 15 not still pending"  "- [ ] #15" "$CONTENT"
+assert_contains     "issue 15 marked complete"   "- [x] #15" "$CONTENT"
+assert_contains     "issue 16 still pending"     "- [ ] #16" "$CONTENT"
+assert_not_contains "issue 15 not still pending" "- [ ] #15" "$CONTENT"
 assert_equals "find-next skips #15 returns #16" "16" "$(find_next "$TMP/QUEUE.md")"
 rm -rf "$TMP"
 
@@ -187,16 +187,28 @@ else
 fi
 
 touch "$TMP/.queue-paused"
-[ -f "$TMP/.queue-paused" ] && { echo "  PASS: pause file detected"; PASS=$((PASS+1)); } \
-  || { echo "  FAIL: pause file not detected"; FAIL=$((FAIL+1)); }
+if [ -f "$TMP/.queue-paused" ]; then
+  echo "  PASS: pause file detected"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: pause file not detected"
+  FAIL=$((FAIL + 1))
+fi
 
 rm "$TMP/.queue-paused"
-[ ! -f "$TMP/.queue-paused" ] && { echo "  PASS: resume removes pause file"; PASS=$((PASS+1)); } \
-  || { echo "  FAIL: pause file still present"; FAIL=$((FAIL+1)); }
+if [ ! -f "$TMP/.queue-paused" ]; then
+  echo "  PASS: resume removes pause file"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: pause file still present"
+  FAIL=$((FAIL + 1))
+fi
 rm -rf "$TMP"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 echo ""
-[[ "$FAIL" -gt 0 ]] && exit 1 || exit 0
+if [[ "$FAIL" -gt 0 ]]; then
+  exit 1
+fi

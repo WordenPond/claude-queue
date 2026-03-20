@@ -39,11 +39,11 @@ jobs:
           token: ${{ secrets.GH_PAT }}
           fetch-depth: 0
 
-      - name: Checkout claude-queue (scripts)
+      - name: Checkout dream-queue (scripts)
         uses: actions/checkout@v4
         with:
-          repository: WordenPond/claude-queue
-          path: .claude-queue
+          repository: WordenPond/dream-queue
+          path: .dream-queue
 
       - name: Configure git
         run: |
@@ -75,7 +75,7 @@ jobs:
         id: prompt
         run: |
           CUSTOM="${{ inputs.prompt_path }}"
-          DEFAULT=".claude-queue/prompts/implement-default.txt"
+          DEFAULT=".dream-queue/prompts/implement-default.txt"
           if [ -f "$CUSTOM" ]; then
             echo "path=$CUSTOM" >> $GITHUB_OUTPUT
           else
@@ -128,4 +128,4 @@ jobs:
           else
             MSG=$(printf "Could not create PR for issue #%s -- check GitHub Actions for details.\n\nhttps://github.com/%s/actions" "$ISSUE" "$REPO")
           fi
-          bash .claude-queue/scripts/notify-telegram.sh "$MSG"
+          bash .dream-queue/scripts/notify-telegram.sh "$MSG"
